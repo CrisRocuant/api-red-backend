@@ -1,61 +1,64 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
-const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 
 const app = express();
 app.use(cors());
-
-const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'es-ES,es;q=0.9'
-};
 
 app.get('/api/prediccion', async (req, res) => {
     const stopCode = (req.query.cod || 'PB785').trim().toUpperCase();
     const url = `https://www.red.cl/planifica-tu-viaje/cuando-llega/?codsimt=${stopCode}`;
 
+    let browser = null;
+
     try {
-        const response = await fetch(url, { headers: HEADERS });
+        browser = await puppeteer.launch({
+            headless: 'new',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--single-process'
+            ]
+        });
 
-        if (!response.ok) {
-            return res.json({ servicios: [], mensaje: 'No se pudo conectar con Red.cl' });
-        }
+        const page = await browser.newPage();
+        let apiData = null;
 
-        const html = await response.text();
-        const $ = cheerio.load(html);
-
-        const serviciosMap = {};
-
-        // Extraer los buses desde la estructura DOM del sitio oficial
-        $('.item-servicio, .servicio-item, [data-servicio]').each((_, el) => {
-            const $el = $(el);
-            const servicio = $el.find('.nombre-servicio, .servicio, h4').text().trim() || 'Servicio';
-            const tiempo = $el.find('.tiempo, .distancia-tiempo').text().trim() || 'Sin estimación';
-            const distancia = $el.find('.distancia').text().trim() || '';
-
-            if (servicio) {
-                if (!serviciosMap[servicio]) {
-                    serviciosMap[servicio] = { id: servicio, buses: [] };
+        // Interceptamos la llamada interna de red.cl que trae el JSON con los buses
+        page.on('response', async (response) => {
+            const respUrl = response.url();
+            if (respUrl.includes('/rest/prediccion/') || respUrl.includes('prediccion')) {
+                try {
+                    const json = await response.json();
+                    if (json) apiData = json;
+                } catch (e) {
+                    // Ignorar respuestas que no sean JSON
                 }
-                serviciosMap[servicio].buses.push({ tiempo, distancia });
             }
         });
 
-        const servicios = Object.values(serviciosMap);
+        // Navegar a la página y esperar la carga dinámica
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 25000 });
 
-        // Retornar siempre en el formato JSON esperado por el frontend
+        await browser.close();
+
+        if (apiData) {
+            return res.json(apiData);
+        }
+
+        // Si no se capturó respuesta JSON directa, devolvemos respuesta estructurada
         res.json({
             paradero: stopCode,
-            servicios: servicios
+            servicios: []
         });
 
     } catch (error) {
-        console.error('Error al realizar scraping:', error.message);
-        res.status(500).json({ 
-            error: 'Error procesando la información del paradero', 
-            details: error.message 
+        if (browser) await browser.close();
+        console.error('Error con Puppeteer:', error.message);
+        res.status(500).json({
+            error: 'Error al obtener la información en tiempo real',
+            details: error.message
         });
     }
 });

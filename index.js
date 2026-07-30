@@ -1,27 +1,20 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const https = require('https');
 
 const app = express();
 app.use(cors());
 
-// Agente HTTPS que ignora restricciones de certificados estrictos de APIs públicas
-const httpsAgent = new https.Agent({
-    rejectUnauthorized: false
-});
-
 app.get('/api/prediccion', async (req, res) => {
     const stopCode = (req.query.cod || 'PB785').trim().toUpperCase();
-    const apiUrl = `https://m.red.cl/rest/prediccion/paradero/${stopCode}`;
+    
+    // API pública de XOR.cl para transporte Red
+    const apiUrl = `https://api.xor.cl/red/bus-stop/${stopCode}`;
 
     try {
         const response = await axios.get(apiUrl, {
-            httpsAgent,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*',
-                'Referer': 'https://m.red.cl/'
+                'User-Agent': 'Mozilla/5.0'
             },
             timeout: 8000
         });
@@ -29,18 +22,17 @@ app.get('/api/prediccion', async (req, res) => {
         res.json(response.data);
 
     } catch (error) {
-        console.error('Error al consultar la API de Red:', error.message);
-        
+        console.error('Error al consultar XOR.cl:', error.message);
+
         if (error.response) {
             return res.status(error.response.status).json({
-                error: `Red respondió con estado ${error.response.status}`,
-                paradero: stopCode,
-                servicios: []
+                error: `No se pudo obtener la información del paradero ${stopCode}`,
+                status: error.response.status
             });
         }
 
         res.status(500).json({
-            error: 'No se pudo conectar con el servidor de Red',
+            error: 'Error de conexión con el servicio de buses',
             details: error.message
         });
     }

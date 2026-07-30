@@ -1,41 +1,46 @@
 const express = require('express');
 const cors = require('cors');
+const axios = require('axios');
+const https = require('https');
 
 const app = express();
 app.use(cors());
 
+// Agente HTTPS que ignora restricciones de certificados estrictos de APIs públicas
+const httpsAgent = new https.Agent({
+    rejectUnauthorized: false
+});
+
 app.get('/api/prediccion', async (req, res) => {
     const stopCode = (req.query.cod || 'PB785').trim().toUpperCase();
-    
-    // Endpoint oficial y directo de consulta de paraderos de Red
     const apiUrl = `https://m.red.cl/rest/prediccion/paradero/${stopCode}`;
 
     try {
-        const response = await fetch(apiUrl, {
-            method: 'GET',
+        const response = await axios.get(apiUrl, {
+            httpsAgent,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Accept': 'application/json, text/plain, */*',
                 'Referer': 'https://m.red.cl/'
-            }
+            },
+            timeout: 8000
         });
 
-        if (!response.ok) {
-            // Si el paradero no existe o la API falla
-            return res.status(response.status).json({
-                error: `No se encontró información para el paradero ${stopCode}`,
+        res.json(response.data);
+
+    } catch (error) {
+        console.error('Error al consultar la API de Red:', error.message);
+        
+        if (error.response) {
+            return res.status(error.response.status).json({
+                error: `Red respondió con estado ${error.response.status}`,
                 paradero: stopCode,
                 servicios: []
             });
         }
 
-        const data = await response.json();
-        res.json(data);
-
-    } catch (error) {
-        console.error('Error al consultar la API:', error.message);
         res.status(500).json({
-            error: 'Error interno al conectar con el servicio de buses',
+            error: 'No se pudo conectar con el servidor de Red',
             details: error.message
         });
     }

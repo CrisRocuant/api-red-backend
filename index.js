@@ -1,63 +1,39 @@
 const express = require('express');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
 
 const app = express();
 app.use(cors());
 
 app.get('/api/prediccion', async (req, res) => {
     const stopCode = (req.query.cod || 'PB785').trim().toUpperCase();
-    const url = `https://www.red.cl/planifica-tu-viaje/cuando-llega/?codsimt=${stopCode}`;
-
-    let browser = null;
+    
+    // URL de la API directa de Red.cl
+    const apiUrl = `https://www.red.cl/rest/prediccion/paradero/${stopCode}`;
 
     try {
-        browser = await puppeteer.launch({
-            headless: 'new',
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--single-process'
-            ]
-        });
-
-        const page = await browser.newPage();
-        let apiData = null;
-
-        // Interceptamos la llamada interna de red.cl que trae el JSON con los buses
-        page.on('response', async (response) => {
-            const respUrl = response.url();
-            if (respUrl.includes('/rest/prediccion/') || respUrl.includes('prediccion')) {
-                try {
-                    const json = await response.json();
-                    if (json) apiData = json;
-                } catch (e) {
-                    // Ignorar respuestas que no sean JSON
-                }
+        const response = await fetch(apiUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://www.red.cl/planifica-tu-viaje/cuando-llega/'
             }
         });
 
-        // Navegar a la página y esperar la carga dinámica
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 25000 });
-
-        await browser.close();
-
-        if (apiData) {
-            return res.json(apiData);
+        if (!response.ok) {
+            return res.status(response.status).json({
+                error: `Red.cl devolvió un código de estado ${response.status}`,
+                paradero: stopCode,
+                servicios: []
+            });
         }
 
-        // Si no se capturó respuesta JSON directa, devolvemos respuesta estructurada
-        res.json({
-            paradero: stopCode,
-            servicios: []
-        });
+        const data = await response.json();
+        res.json(data);
 
     } catch (error) {
-        if (browser) await browser.close();
-        console.error('Error con Puppeteer:', error.message);
+        console.error('Error al consultar la API de Red:', error.message);
         res.status(500).json({
-            error: 'Error al obtener la información en tiempo real',
+            error: 'Error de servidor al consultar información en tiempo real',
             details: error.message
         });
     }
